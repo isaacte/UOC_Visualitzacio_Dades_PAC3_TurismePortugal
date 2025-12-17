@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard Turístic: Final Perfecte</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script> <!--Carreguem la llibreria per a fer els gràfics -->
+    <script src="https://unpkg.com/topojson@3"></script> <!--Carreguem la llibreria per treballar amb el format topojson-->
+	<!--Definim els estils en el mateix fither HTML-->
+    <style>
+        /* Fons i base */
+        body { margin: 0; background: #0f172a; font-family: 'Segoe UI', sans-serif; overflow: hidden; color: white; }
+        
+        #viz-container { width: 100vw; height: 100vh; cursor: grab; will-change: transform; }
+        #viz-container:active { cursor: grabbing; }
+
+        /* Mapa */
+        .land { 
+            stroke: #1e293b; stroke-width: 0.2px; 
+            shape-rendering: geometricPrecision; transition: fill 0.3s; cursor: pointer;
+        }
+        .land:hover { stroke: white; stroke-width: 0.8px; opacity: 1 !important; }
+        /* Contorns */
+        .flow-path {
+            fill: none; stroke-linecap: round; cursor: pointer;
+            transition: opacity 0.2s; mix-blend-mode: screen; display: block;
+        }
+        .flow-path.selected-persistent {
+            display: block !important; opacity: 1 !important;
+            stroke: #fbbf24 !important; filter: drop-shadow(0 0 5px #fbbf24);
+            z-index: 9999; pointer-events: stroke !important;
+        }
+        .flow-path.dimmed { opacity: 0.05 !important; }
+        .flowing { stroke-dasharray: 4, 6; animation: flowAnim 4s linear infinite; }
+        @keyframes flowAnim { from { stroke-dashoffset: 10; } to { stroke-dashoffset: 0; } }
+
+        /* Gràfics de sectors */
+        .pie-group { opacity: 0; pointer-events: none; transition: opacity 0.3s ease; cursor: pointer; }
+        .pie-group.visible { opacity: 1; pointer-events: all; }
+        .pie-slice { stroke: #0f172a; stroke-width: 0.1px; }
+        .pie-slice:hover { opacity: 0.8; stroke: white; stroke-width: 0.5px; }
+
+        /* Etiquetes */
+        .label-dest { 
+            font-size: 9px; fill: white; text-anchor: middle; font-weight: bold; 
+            pointer-events: none; text-shadow: 0 1px 2px black; opacity: 0; transition: opacity 0.3s;
+        }
+		
+		/* Introducció */
+        #story-box {
+            position: absolute; top: 30px; left: 30px; width: 320px;
+            background: rgba(15, 23, 42, 0.95); padding: 20px; border-radius: 8px; 
+            border-left: 4px solid #38bdf8; box-shadow: 0 4px 15px rgba(0,0,0,0.3); pointer-events: none;
+            z-index: 10;
+        }
+        #story-box h1 { margin: 0 0 10px 0; font-size: 18px; color: white; }
+        #story-box p { margin: 0 0 10px 0; font-size: 13px; color: #cbd5e1; line-height: 1.5; }
+		
+		/* Llegenda */
+        #legend {
+            position: absolute; bottom: 20px; left: 30px; 
+            background: rgba(15, 23, 42, 0.95); padding: 15px; width: 260px; /* Una mica més ample */
+            border-radius: 8px; border: 1px solid #334155; pointer-events: none; z-index: 10;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        .legend-title { font-size: 11px; font-weight: bold; text-transform: uppercase; color: #cbd5e1; margin-bottom: 5px; }
+        
+        /* Barra de gradient */
+        .gradient-bar { width: 100%; height: 8px; margin-bottom: 4px; background: linear-gradient(to right, #34d399, #38bdf8, #818cf8, #ef4444); border-radius: 4px; }
+        .legend-labels { display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; margin-bottom: 12px; }
+        
+        /* Separador visual */
+        .legend-divider { border-top: 1px solid #334155; margin: 10px 0; }
+
+        /* Graella per als tipus de turista */
+        .segment-grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; /* Dues columnes */
+            gap: 6px; 
+        }
+        .segment-item { display: flex; align-items: center; font-size: 10px; color: #cbd5e1; }
+        .segment-dot { 
+            width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; 
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .legend-note { font-size: 10px; color: #94a3b8; margin-top: 12px; font-style: italic; }
+		.legend-tourist-type { display: none }
+        /* Slider */
+        #time-controls {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            width: 500px; background: rgba(15, 23, 42, 0.95);
+            padding: 15px 30px; border-radius: 50px; border: 1px solid #38bdf8;
+            display: flex; flex-direction: column; align-items: center;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5); z-index: 2000;
+        }
+        #date-display { 
+            font-size: 16px; font-weight: bold; color: #38bdf8; margin-bottom: 12px; font-family: monospace; 
+            display: flex; gap: 10px; align-items: center;
+        }
+        
+        .range-slider-container { 
+            position: relative; width: 100%; height: 20px; 
+            display: flex; align-items: center; /* Centrat vertical flex */
+        }
+        
+        /* La línia de fons grisa */
+        .slider-track {
+            position: absolute; width: 100%; height: 4px; 
+            background: #334155; border-radius: 2px;
+            top: 50%; transform: translateY(-50%); /* Centrat perfecte */
+        }
+        
+        /* La línia blava de progrés */
+        .slider-track-highlight {
+            position: absolute; height: 4px; 
+            background: #38bdf8; z-index: 1;
+            top: 50%; transform: translateY(-50%); /* Centrat perfecte */
+        }
+        
+        /* Els Inputs (invisibles) */
+        input[type=range] {
+            position: absolute; 
+            width: 100%; 
+            top: 50%; transform: translateY(-50%); /* Centrat perfecte */
+            margin: 0; padding: 0; /* Eliminar marges navegador */
+            pointer-events: none; 
+            -webkit-appearance: none; background: none; z-index: 2;
+        }
+        
+        /* Thumb chrome*/
+		input[type=range]::-webkit-slider-thumb {
+			-webkit-appearance: none; 
+			pointer-events: all; /* Reactiva clics a la bola */
+			width: 18px; height: 18px; 
+			border-radius: 50%; 
+			background: white; 
+			cursor: pointer; 
+			border: 2px solid #38bdf8;
+			box-shadow: 0 0 5px rgba(0,0,0,0.5);
+			margin-top: 0; 
+		}
+
+		/* Thumb firefox */
+		input[type=range]::-moz-range-thumb {
+			pointer-events: all; 
+			width: 18px; height: 18px; 
+			border-radius: 50%; 
+			background: white; 
+			cursor: pointer; 
+			border: 2px solid #38bdf8;
+			box-shadow: 0 0 5px rgba(0,0,0,0.5);
+			border: none;
+		}
+
+        /* Barra lateral de detalls */
+        #side-panel {
+            position: fixed; top: 0; right: 0; 
+            width: 340px; height: 100vh;
+            background: rgba(15, 23, 42, 0.98); 
+            border-left: 1px solid #334155;
+            padding: 25px; box-sizing: border-box; overflow-y: auto;
+            transform: translateX(100%); 
+            transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1); 
+            z-index: 3000; box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+        }
+        #side-panel.active { transform: translateX(0); }
+        .close-btn { position: absolute; top: 15px; right: 15px; cursor: pointer; font-size: 20px; color: #94a3b8; }
+        .close-btn:hover { color: white; }
+
+        h2 { margin: 0 0 5px 0; font-size: 22px; color: #38bdf8; }
+        .chart-row { margin-bottom: 8px; }
+        .bar-bg { background: #334155; height: 6px; width: 100%; border-radius: 3px; }
+        .bar-fill { height: 100%; border-radius: 3px; }
+        .meta { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; color: #cbd5e1; }
+        .section-title { color: #cbd5e1; font-size: 11px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase; border-bottom: 1px solid #334155; padding-bottom: 5px; letter-spacing: 1px; }
+
+        #tooltip {
+            position: absolute; background: rgba(15, 23, 42, 0.98); border: 1px solid #38bdf8;
+            padding: 8px 12px; font-size: 11px; pointer-events: none; opacity: 0; z-index: 4000; color: white; border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="viz-container"></div>
+
+<div id="story-box">
+    <h1>Qui va a portugal?</h1>
+    <p>Visualització de reserves amb destinació Portugal</p>
+    <p style="color:#38bdf8; font-style:italic;">Per a veure més detalls feu clic al país o amplieu el mapa per veure el tipus de turista</p>
+</div>
+
+<div id="legend">
+    <div class="legend-title">Taxa de Cancel·lació</div>
+    <div class="gradient-bar"></div>
+    <div class="legend-labels"><span>0%</span><span>50%</span><span>100%</span></div>
+	
+	<!-- Només es mostra si es fa zoom -->
+	<div class="legend-tourist-type">
+		<div class="legend-divider"></div>
+		<div class="legend-title">Tipus de Turista</div>
+		<div class="segment-grid">
+			<div class="segment-item"><div class="segment-dot" style="background:#fbbf24"></div>Couple</div>
+			<div class="segment-item"><div class="segment-dot" style="background:#f472b6"></div>Family</div>
+			<div class="segment-item"><div class="segment-dot" style="background:#22d3ee"></div>Single</div>
+			<div class="segment-item"><div class="segment-dot" style="background:#a78bfa"></div>Others</div>
+		</div>
+	</div>
+
+</div>
+
+<div id="time-controls">
+    <div id="date-display">
+        <span id="date-start">...</span>
+        <span style="color:#94a3b8">➔</span>
+        <span id="date-end">...</span>
+    </div>
+    <div class="range-slider-container">
+        <div class="slider-track"></div>
+        <div class="slider-track-highlight" id="slider-highlight"></div>
+        <input type="range" id="input-start" min="0" max="100" value="0">
+        <input type="range" id="input-end" min="0" max="100" value="100">
+    </div>
+</div>
+
+<div id="side-panel">
+    <div class="close-btn" onclick="resetHighlight()">×</div>
+    <div id="panel-content"></div>
+</div>
+<div id="tooltip"></div>
+
+<script>
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    const svg = d3.select("#viz-container").append("svg")
+        .attr("width", width).attr("height", height)
+        .attr("text-rendering", "optimizeLegibility")
+        .on("click", resetHighlight);
+	
+	// Afegim un grup (pare) a cada element
+    const mapGroup = svg.append("g");
+    const layerLand = mapGroup.append("g");
+    const layerLines = mapGroup.append("g");
+    const layerOrigins = mapGroup.append("g"); 
+    const layerNodes = mapGroup.append("g"); 
+	
+	//Utilitzem la projecció Mercator i centrem el mapa
+    const projection = d3.geoMercator()
+        .center([10, 30]) .scale(width / 6.5) .translate([width / 2, height / 2]);
+    const path = d3.geoPath().projection(projection);
+    const curve = d3.line().curve(d3.curveBasis);
+	
+	// Definim l'escala de colors
+    const colorScale = d3.scaleLinear().domain([0, 0.2, 0.5, 1]).range(["#34d399", "#38bdf8", "#818cf8", "#ef4444"]); 
+    const segmentColors = d3.scaleOrdinal()
+        .domain(["Online TA", "Offline TA/TO", "Groups", "Direct", "Corporate", "Complementary"])
+        .range(["#fbbf24", "#f472b6", "#22d3ee", "#a78bfa", "#e879f9", "#ffffff"]);
+    
+    const radiusScale = d3.scaleSqrt().domain([0, 10000]).range([1.5, 6]);
+
+    // Definim el conjunt de variables i estats
+    let GLOBAL_DATASET = []; //Dataset complet
+	
+    let TIME_STEPS = []; //Passos del slider
+    let START_INDEX = 0; //Posició start del slider
+    let END_INDEX = 0; //Posició end del slider
+
+    let MASTER_DATA = {}; 	//Dataset agregat per país
+    let RAW_FLOWS_AGGREGATED = []; //Guardem les dades per als fluxos
+    let NODES = {};  //Punts fixos de destinació
+    let DEST_DATA = {}; //Guardem les dades relatives a cada destinació
+    let DEST_ORIGINS = {}; //Guardem quin país va a quin hotel per generar el TOP 10
+    
+    let SELECTED_ID = null; //Guardem el país seleccionat per mostrar stats i aïllar flux
+    let CURRENT_ZOOM = 1; //Ens guardem el zoom actual per a calculs i condicions
+    let LOOKUP_MAP = new Map();  //Guardarem la relació de IDs amb codi de pais
+	
+	// Handler per a sortir dels detalls si es prem la tecla esc
+    window.addEventListener('keydown', function(e) { if(e.key === "Escape") resetHighlight(); });
+	
+	//Carreguem el mapa amb les dades (resolució 50)
+    Promise.all([
+        d3.json("https://unpkg.com/world-atlas@2.0.2/countries-50m.json"),
+        d3.csv("dades_visualitzacio.csv"),
+        d3.csv("country_coords.csv")
+    ]).then(function([world, csvData, coordsData]) {
+		//Creem la relació de IDs amb codi de pais del dataset
+        const idToName = new Map();
+        const coordsMap = new Map(); 
+
+        coordsData.forEach(d => {
+            const alpha3 = d["Alpha-3 code"];
+            const numeric = d["Numeric code"]; 
+            const name = d["Country"]; 
+            const lat = parseFloat(d["Latitude (average)"]);
+            const lng = parseFloat(d["Longitude (average)"]);
+
+            if (alpha3 && !isNaN(lat)) {
+                coordsMap.set(alpha3, [lng, lat]);
+                idToName.set(alpha3, name);
+                
+                LOOKUP_MAP.set(alpha3, alpha3); 
+                if (d["Alpha-2 code"]) LOOKUP_MAP.set(d["Alpha-2 code"], alpha3);
+                LOOKUP_MAP.set(name, alpha3);
+                if (numeric) {
+				//Guardem la versió amb enter i de tres xifres per poder creuar correctament
+                    LOOKUP_MAP.set(numeric.padStart(3, '0'), alpha3);
+                    LOOKUP_MAP.set(parseInt(numeric, 10), alpha3);
+                }
+            }
+        });
+		//Creem els nodes de destí (ciutat, resort i un de virtual per quan no hi ha zoom)
+        NODES = {
+            "City Hotel": { coords: [-9.13, 38.72], label: "City Hotel" },
+            "Resort Hotel": { coords: [-8.00, 37.02], label: "Resort Hotel" },
+            "VIRTUAL_CENTER": { coords: [-8.5, 39.5] } 
+        };
+
+        // Llegim les dades del dataset i les inserim a la variable GLOBAL_DATASET
+        csvData.forEach(d => {
+            if (!d.country) return;
+            const canonicalID = LOOKUP_MAP.get(d.country) || d.country;
+            const coords = coordsMap.get(canonicalID);
+            const fullName = idToName.get(canonicalID) || d.country;
+
+            if (coords) {
+                // Convertim la data i ens guardem la string per al slider
+				const dateObj = new Date(`${d.arrival_date_month} 1, ${d.arrival_date_year}`); //Primer dia del mes
+				
+                GLOBAL_DATASET.push({
+                    ...d,
+                    canonicalID: canonicalID,
+                    countryName: fullName,
+                    coords: coords,
+                    date: dateObj,
+                    success: +d.completed_bookings || 0,
+                    cancel: +d.canceled_bookings || 0
+                });
+            }
+        });
+
+
+		//Creem els steps per al slider
+		const uniqueTimestamps = new Set(GLOBAL_DATASET.map(d => d.date.getTime()));
+
+		TIME_STEPS = Array.from(uniqueTimestamps)
+			.sort((a, b) => a - b)
+			.map(ts => new Date(ts));
+		
+		console.log(TIME_STEPS)
+		START_INDEX = 0;
+		END_INDEX = TIME_STEPS.length - 1;
+
+        //Inicialitzem l'Slider
+        setupRangeSlider();
+
+        // MAPA BASE
+        const countriesFeature = topojson.feature(world, world.objects.countries);
+        layerLand.selectAll("path").data(countriesFeature.features).enter().append("path")
+            .attr("d", path)
+            .attr("class", d => LOOKUP_MAP.get(d.id) === "PRT" ? "land portugal" : "land")
+            .on("click", (e, d) => {
+                e.stopPropagation();
+                const alpha3 = d.resolvedID || LOOKUP_MAP.get(d.id);
+                if(alpha3 && MASTER_DATA[alpha3]) {
+                    highlightSelection(alpha3);
+                    openPanel(alpha3);
+                }
+            });
+
+        // Primera càrrega de la interfície
+        updateDataAndDraw();
+
+        // Handle per al canvi de zoom
+        const zoom = d3.zoom()
+            .scaleExtent([1, 40])
+            .on("zoom", (event) => {
+                const { transform } = event;
+                CURRENT_ZOOM = transform.k;
+                mapGroup.attr("transform", transform);
+                updateVisualState();
+            });
+        svg.call(zoom);
+
+    }).catch(err => { console.error(err); alert("Error dades"); });
+
+
+    // Lògica del Slider
+    function setupRangeSlider() {
+        const inputStart = document.getElementById("input-start");
+        const inputEnd = document.getElementById("input-end");
+        const highlight = document.getElementById("slider-highlight");
+        
+        const maxVal = TIME_STEPS.length - 1;
+        inputStart.max = maxVal; inputEnd.max = maxVal;
+        
+        // Iniciem amb tot el rang
+        inputStart.value = 0;
+        inputEnd.value = maxVal;
+
+        function updateSlider() {
+            let v1 = parseInt(inputStart.value);
+            let v2 = parseInt(inputEnd.value);
+
+            if (v1 > v2) { v1 = v2; inputStart.value = v1; }
+
+            START_INDEX = v1;
+            END_INDEX = v2;
+
+            const percent1 = (v1 / maxVal) * 100;
+            const percent2 = (v2 / maxVal) * 100;
+            
+            highlight.style.left = percent1 + "%";
+            highlight.style.width = (percent2 - percent1) + "%";
+
+            updateDataAndDraw();
+        }
+
+        // Executar una vegada per posar la barra blava al lloc
+        updateSlider();
+
+        inputStart.addEventListener("input", updateSlider);
+        inputEnd.addEventListener("input", updateSlider);
+    }
+
+
+    // Lògica d'actualitzar dades i renderitzat
+    function updateDataAndDraw() {
+        const startDate = TIME_STEPS[START_INDEX];
+        const endDate = TIME_STEPS[END_INDEX];
+		
+		// Format de la data
+		const options = { year: 'numeric', month: 'long' };
+        
+        document.getElementById("date-start").innerText = startDate.toLocaleDateString('ca-ES', options);
+        document.getElementById("date-end").innerText = endDate.toLocaleDateString('ca-ES', options);
+
+        // Reset
+        MASTER_DATA = {};
+        RAW_FLOWS_AGGREGATED = [];
+        DEST_DATA = {};
+        DEST_ORIGINS = {};
+
+        // Filtre de Rang 
+        const currentData = GLOBAL_DATASET.filter(d => d.date >= startDate && d.date <= endDate);
+		
+		// Calculem la informació de cada node
+        currentData.forEach(d => {
+            if (!MASTER_DATA[d.canonicalID]) {
+                MASTER_DATA[d.canonicalID] = { 
+                    id: d.canonicalID, name: d.countryName, coords: d.coords,
+                    success: 0, cancel: 0, total: 0, segments: {}, destinations: {}
+                };
+            }
+            const node = MASTER_DATA[d.canonicalID];
+            node.success += d.success;
+            node.cancel += d.cancel;
+            node.total += (d.success + d.cancel);
+            if (!node.segments[d.tourist_type]) node.segments[d.tourist_type] = 0;
+            node.segments[d.tourist_type] += (d.success + d.cancel);
+
+            if (d.success > 0) {
+                RAW_FLOWS_AGGREGATED.push({ id: d.canonicalID, fromCoords: d.coords, vol: d.success });
+                
+                if (!DEST_DATA[d.hotel]) DEST_DATA[d.hotel] = {};
+                if (!DEST_DATA[d.hotel][d.tourist_type]) DEST_DATA[d.hotel][d.tourist_type] = 0;
+                DEST_DATA[d.hotel][d.tourist_type] += d.success;
+
+                if (!DEST_ORIGINS[d.hotel]) DEST_ORIGINS[d.hotel] = {};
+                if (!DEST_ORIGINS[d.hotel][d.canonicalID]) DEST_ORIGINS[d.hotel][d.canonicalID] = 0;
+                DEST_ORIGINS[d.hotel][d.canonicalID] += d.success;
+				
+				if (!node.destinations[d.hotel]) node.destinations[d.hotel] = 0;
+                node.destinations[d.hotel] += d.success;
+            }
+        });
+
+        Object.values(MASTER_DATA).forEach(s => s.ratio = s.total > 0 ? s.cancel/s.total : 0);
+
+        // Lògica per mostrar el mapa
+        
+
+        layerLand.selectAll("path")
+            .attr("fill", d => {
+                const alpha3 = LOOKUP_MAP.get(d.id);
+                const stats = MASTER_DATA[alpha3];
+                if (stats && stats.total > 0) {
+                    d.resolvedID = alpha3; 
+                    return colorScale(stats.ratio); // Pintem segons cancel·lacions
+                }
+                return "#1e293b";
+            });
+
+        // Fluxos de viatgers
+        layerLines.selectAll("*").remove();
+        const flowMap = new Map();
+        RAW_FLOWS_AGGREGATED.forEach(f => {
+            if(!flowMap.has(f.id)) flowMap.set(f.id, { id: f.id, from: f.fromCoords, total: 0 });
+            flowMap.get(f.id).total += f.vol;
+        });
+
+        layerLines.selectAll(".flow-path")
+            .data(Array.from(flowMap.values()))
+            .enter().append("path")
+            .attr("class", "flow-path flowing")
+            .attr("id", d => `line-${d.id}`)
+            .attr("stroke", "#fbbf24") 
+            .attr("stroke-width", d => Math.max(0.3, Math.min(3, d.total / 500)))  // Calculem el gruix segons quantitat de viatgers del node
+            .attr("opacity", 0.6) 
+            .attr("d", d => {
+                const pStart = projection(d.from);
+                const pEnd = projection(NODES["VIRTUAL_CENTER"].coords);
+                const mid = [(pStart[0]+pEnd[0])/2, (pStart[1]+pEnd[1])/2 - 60]; // Fa que les línies tinguin forma de arc
+                return curve([pStart, mid, pEnd]);
+            })
+            .on("click", (e, d) => { e.stopPropagation(); highlightSelection(d.id); openPanel(d.id); }) //Al clicar al flux obrim detalls
+            .on("mouseover", (e, d) => {	//Mostrem tooltip al passar el ratolí per sobre
+                const s = MASTER_DATA[d.id];
+                if(s) showTooltip(e, `<b>${s.name}</b><br>Flux Agregat: ${s.success}`);
+                d3.select(e.target).style("stroke", "white");
+            })
+            .on("mouseout", (e) => { //Tanquem tooltip
+                hideTooltip();
+                if(!d3.select(e.target).classed("selected-persistent")) d3.select(e.target).style("stroke", "#fbbf24");
+            });
+
+        // Gràfic de sectors
+        layerOrigins.selectAll("*").remove();
+        layerNodes.selectAll("*").remove();
+        
+        const pieGen = d3.pie().value(d => d[1]).sort(null);
+        const arcGenOrigin = d3.arc().innerRadius(0);
+        const arcGenDest = (r) => d3.arc().innerRadius(r * 0.5).outerRadius(r);
+		
+		//Per cada una dels orígens (excepte portugal que farem anar el punt virtual) dibuixem gràfic de sectors
+        Object.values(MASTER_DATA).forEach(stats => {
+            if(stats.id !== "PRT" && stats.total < 1) return;
+            const [px, py] = projection(stats.coords);
+            const g = layerOrigins.append("g").attr("class", "pie-group").attr("data-px", px).attr("data-py", py)
+                .attr("transform", `translate(${px}, ${py})`);
+            
+            g.selectAll("path").data(pieGen(Object.entries(stats.segments))).enter().append("path")
+                .attr("class", "pie-slice").attr("d", arcGenOrigin.outerRadius(radiusScale(stats.total)))
+                .attr("fill", d => segmentColors(d.data[0]))
+                .on("click", (e) => { e.stopPropagation(); highlightSelection(stats.id); openPanel(stats.id); })
+                .on("mouseover", (e,d) => showTooltip(e, `<b>${d.data[0]}</b>: ${d.data[1]}`)).on("mouseout", hideTooltip);
+        });
+		
+		//Per a cada unn dels destins (excepte la virtual que la fem anar quan no hi ha zoom)
+        Object.keys(NODES).forEach(key => {
+            if(key === "VIRTUAL_CENTER") return;
+            const dataObj = DEST_DATA[key];
+            if(!dataObj) return;
+            const total = d3.sum(Object.values(dataObj));
+            const [px, py] = projection(NODES[key].coords);
+            const g = layerNodes.append("g").attr("class", "pie-group").attr("data-px", px).attr("data-py", py)
+                .attr("transform", `translate(${px}, ${py})`);
+
+            g.selectAll("path").data(pieGen(Object.entries(dataObj))).enter().append("path")
+                .attr("class", "pie-slice").attr("d", arcGenDest(radiusScale(total)))
+                .attr("fill", d => segmentColors(d.data[0])).attr("stroke", "white").attr("stroke-width", 0.5)
+                .on("click", (e) => { e.stopPropagation(); openPanel(key); })
+                .on("mouseover", (e,d) => showTooltip(e, `<b>${d.data[0]}</b>`)).on("mouseout", hideTooltip);
+            
+            g.append("text").attr("class", "label-dest").attr("y", radiusScale(total)+8).text(NODES[key].label);
+        });
+
+        if (SELECTED_ID) highlightSelection(SELECTED_ID);
+        
+        updateVisualState();
+    }
+
+
+    // Actualització dels estats
+    function updateVisualState() {
+        const isZoomed = CURRENT_ZOOM > 8; //Definim condició de zoom
+
+        // Línies
+        layerLines.selectAll(".flow-path").each(function(d) {
+            const el = d3.select(this);
+            const isSelected = (d.id === SELECTED_ID);
+
+            if (isSelected) { //si hi ha línia seleccionada
+                el.classed("selected-persistent", true).classed("dimmed", false).classed("hidden", false)
+                  .style("display", "block").style("opacity", 1)
+                  .style("stroke-width", isZoomed ? (3/CURRENT_ZOOM) : 4).raise();
+            } else {
+                el.classed("selected-persistent", false);
+                if (isZoomed) {		//Ocultem línies si s'ha fet suficient zoom
+                    el.style("display", "none");
+                } else {
+                    el.style("display", "block").classed("dimmed", SELECTED_ID !== null)
+                      .style("opacity", SELECTED_ID ? 0.05 : 0.6)
+                      .style("stroke-width", d => Math.max(0.3, Math.min(2, d.total/500)));
+                }
+            }
+        });
+
+        // Mostrem només els gràfics de sectors si s'ha fet zoom suficient
+        const showPies = isZoomed;
+        layerOrigins.selectAll(".pie-group").classed("visible", showPies);
+        layerNodes.selectAll(".pie-group").classed("visible", showPies);
+        layerNodes.selectAll(".label-dest").style("opacity", showPies ? 1 : 0);
+		d3.selectAll(".legend-tourist-type").style("display", showPies ? "block" : "none");
+
+        d3.selectAll(".pie-group").attr("transform", function() {
+            const px = parseFloat(d3.select(this).attr("data-px"));
+            const py = parseFloat(d3.select(this).attr("data-py"));
+            let scaleFactor = 1.5 / Math.pow(CURRENT_ZOOM, 0.7); 
+            return `translate(${px}, ${py}) scale(${scaleFactor})`; 
+        });
+    }
+	
+	// Funció que s'utilitza quan es selecciona un element
+    function highlightSelection(id) {
+        SELECTED_ID = id;
+        updateVisualState();
+    }
+	
+	// Funció per deseleccionar (esc o tancar detalls)
+    function resetHighlight() {
+        SELECTED_ID = null;
+        updateVisualState();
+        d3.select("#side-panel").classed("active", false);
+    }
+
+	// Funció per mostrar els detalls del panell
+    function openPanel(id) {
+        const panel = d3.select("#side-panel").classed("active", true);
+        const content = d3.select("#panel-content");
+        
+        const isHotel = (id === "City Hotel" || id === "Resort Hotel");
+        let title, total, segmentsObj, headerHtml, extraContent = "";
+		
+		//Si cliquem en un destí
+        if (isHotel) {
+            segmentsObj = DEST_DATA[id] || {};
+            total = d3.sum(Object.values(segmentsObj));
+            title = NODES[id].label;
+            const origins = DEST_ORIGINS[id] || {};
+            const top = Object.entries(origins).sort((a,b)=>b[1]-a[1]).slice(0,10);
+            headerHtml = `<div style="color:#38bdf8; margin-bottom:10px;">Receptor (Hotel)</div>`;
+            extraContent = `<div class="section-title">Top 10 Orígens</div>` + top.map(([k,v]) => {
+                const name = MASTER_DATA[k] ? MASTER_DATA[k].name : k;
+                return `<div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:4px; border-bottom:1px solid #334155;"><span>${name}</span><span><b>${v}</b> (${Math.round(v/total*100)}%)</span></div>`;
+            }).join('');
+        } else { //Si cliquem en un orígen
+            const stats = MASTER_DATA[id];
+            if(!stats) return;
+            segmentsObj = stats.segments;
+            total = stats.total;
+            title = stats.name;
+            const pct = Math.round(stats.ratio*100);
+            headerHtml = `<div style="margin-bottom:15px; font-size:14px;">Taxa Cancel·lació: <span style="color:${colorScale(stats.ratio)}; font-weight:bold;">${pct}%</span></div>
+            <div class="chart-row"><div class="meta"><span>Realitzat</span><span>${stats.success}</span></div><div class="bar-bg"><div class="bar-fill" style="width:${stats.success/total*100}%; background:#34d399"></div></div></div>
+            <div class="chart-row"><div class="meta"><span>Cancel·lat</span><span>${stats.cancel}</span></div><div class="bar-bg"><div class="bar-fill" style="width:${stats.cancel/total*100}%; background:#ef4444"></div></div></div>
+            <div style="border-top:1px solid #334155; margin:15px 0;"></div><div class="section-title">Segments</div>`;
+			const dests = stats.destinations || {};
+            const totalDest = d3.sum(Object.values(dests));
+            if(totalDest > 0) {
+                extraContent = `<div style="border-top:1px solid #334155; margin:15px 0;"></div><div class="section-title">Destinacions</div>` + 
+                Object.entries(dests).sort((a,b)=>b[1]-a[1]).map(([k,v]) => {
+                    // Convertim a barra visual
+                    return `
+                    <div class="chart-row">
+                        <div class="meta"><span>${k}</span><span>${v} (${Math.round(v/totalDest*100)}%)</span></div>
+                        <div class="bar-bg"><div class="bar-fill" style="width:${(v/totalDest)*100}%; background:#38bdf8"></div></div>
+                    </div>`;
+                }).join('');
+            }
+        }
+		//Creem el html dinàmicament
+        content.html(`<h2>${title}</h2>${headerHtml}` + Object.entries(segmentsObj).sort((a,b)=>b[1]-a[1]).map(([k,v]) => `
+            <div class="chart-row"><div class="meta"><span style="color:${segmentColors(k)}">${k}</span><span>${Math.round(v/total*100)}%</span></div>
+            <div class="bar-bg"><div class="bar-fill" style="width:${v/total*100}%; background:${segmentColors(k)}"></div></div></div>
+        `).join('') + extraContent);
+    }
+	
+	//Definim el tooltip i les seves funcions
+    const tooltip = d3.select("#tooltip");
+    function showTooltip(event, txt) { tooltip.style("opacity", 1).html(txt).style("left", (event.pageX+15)+"px").style("top", (event.pageY-15)+"px"); }
+    function hideTooltip() { tooltip.style("opacity", 0); }
+
+</script>
+</body>
+</html>
